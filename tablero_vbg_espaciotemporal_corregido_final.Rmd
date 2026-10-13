@@ -1,0 +1,456 @@
+---
+title: "Tablero espacio-temporal de VBG, Colombia 2012–2024"
+author: "Ana Isabel Giraldo y Dayner Orlando Cruz Chate"
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: fill
+    theme: cosmo
+    source_code: embed
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+ options(scipen=999, encoding="UTF-8")
+ knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+
+ paquetes <- c("flexdashboard","shiny","dplyr","tidyr","readr","stringr","lubridate",
+              "plotly","DT","leaflet","sf","spdep","scales","htmltools","htmlwidgets",
+              "viridisLite","RColorBrewer")
+# faltantes <- paquetes[!vapply(paquetes, requireNamespace, logical(1), quietly=TRUE)]
+# if(length(faltantes)) stop("Instale primero: install.packages(c(",
+#                            paste(sprintf("'%s'", faltantes), collapse=","), "))")
+
+invisible(lapply(paquetes, library, character.only=TRUE))
+```
+
+
+```{r setup_datos, include=FALSE}
+ruta_csv <- "consolidado_875_incluidos.csv"
+ruta_poblacion <- "poblacion_dane_2012_2024.csv"
+ruta_mapa <- "municipios_dane.geojson"
+
+pastel <- c("#A8DADC", "#F4A6C1", "#FFD6A5", "#BDB2FF", "#B9FBC0", "#FFADAD", "#9BF6FF")
+
+normalizar_codigo <- function(x) stringr::str_pad(stringr::str_extract(as.character(x), "[0-9]+"), 5, pad="0")
+leer_csv_seguro <- function(ruta){
+  if(!file.exists(ruta)) stop("No se encontró el archivo: ", ruta)
+  suppressMessages(readr::read_csv(ruta, show_col_types=FALSE,
+                                    locale=locale(encoding="UTF-8"),
+                                    progress=FALSE, guess_max=100000))
+}
+
+vbg <- leer_csv_seguro(ruta_csv)
+names(vbg) <- stringr::str_trim(names(vbg))
+req <- c("COD_MUN_N", "PERIODO")
+if(!all(req %in% names(vbg))) stop("El CSV debe contener: ", paste(req, collapse=", "))
+
+vbg <- vbg %>%
+  mutate(COD_MUN_N=normalizar_codigo(COD_MUN_N),
+         PERIODO=as.character(PERIODO),
+         ANIO=readr::parse_integer(stringr::str_extract(PERIODO, "^[0-9]{4}")),
+         MES=readr::parse_integer(stringr::str_extract(PERIODO, "(?<=^.{5})[0-9]{2}"))) %>%
+  filter(ANIO %in% 2012:2024, MES %in% 1:12, !is.na(COD_MUN_N))
+
+nom_mun <- intersect(c("Municipio_notificacion","MUNICIPIO_NOTIFICACION","Nombre Municipio"), names(vbg))[1]
+if(is.na(nom_mun)) vbg$MUNICIPIO <- vbg$COD_MUN_N else vbg$MUNICIPIO <- as.character(vbg[[nom_mun]])
+
+conteos <- vbg %>% count(ANIO, MES, COD_MUN_N, MUNICIPIO, name="CASOS")
+
+pob_ok <- file.exists(ruta_poblacion)
+if(pob_ok){
+  pob <- leer_csv_seguro(ruta_poblacion)
+  names(pob) <- toupper(stringr::str_trim(names(pob)))
+  if(!all(c("COD_MUN_N","ANIO","POBLACION") %in% names(pob)))
+    stop("poblacion_dane_2012_2024.csv debe contener COD_MUN_N, ANIO y POBLACION")
+  pob <- pob %>% transmute(COD_MUN_N=normalizar_codigo(COD_MUN_N),
+                           ANIO=as.integer(ANIO), POBLACION=as.numeric(POBLACION)) %>%
+    distinct(COD_MUN_N, ANIO, .keep_all=TRUE)
+} else {
+  pob <- tibble(COD_MUN_N=character(), ANIO=integer(), POBLACION=double())
+}
+
+anual <- conteos %>% group_by(ANIO,COD_MUN_N,MUNICIPIO) %>% summarise(CASOS=sum(CASOS),.groups="drop") %>%
+  left_join(pob, by=c("ANIO","COD_MUN_N")) %>%
+  mutate(TASA_100MIL=if_else(!is.na(POBLACION) & POBLACION>0, 100000*CASOS/POBLACION, NA_real_))
+
+mapa_ok <- file.exists(ruta_mapa)
+if(mapa_ok){
+  mapa <- sf::st_read(ruta_mapa, quiet=TRUE)
+  cod_geo <- intersect(c("COD_MUN_N","MPIO_CCNCT","CODIGO","CodigoDivipola"), names(mapa))[1]
+  if(is.na(cod_geo)) stop("El GeoJSON debe incluir un código municipal: COD_MUN_N, MPIO_CCNCT, CODIGO o CodigoDivipola")
+  mapa$COD_MUN_N <- normalizar_codigo(mapa[[cod_geo]])
+  mapa <- sf::st_make_valid(mapa) %>% distinct(COD_MUN_N,.keep_all=TRUE)
+}
+```
+
+<style>
+body, p, li, .section { text-align: justify; }
+.navbar, .navbar-inverse { background-color:#8ECAE6 !important; border-color:#8ECAE6 !important; }
+.chart-title { color:#514B64; font-weight:700; }
+.value-box { border-radius:14px; }
+.dataTables_wrapper { overflow-x:auto; width:100%; }
+.table-scroll { overflow:auto; max-height:520px; }
+.alerta {background:#FFF1B6; border-left:6px solid #F4A261; padding:12px; border-radius:8px;}
+.nota {background:#E8F8F5; border-left:6px solid #77C9B5; padding:12px; border-radius:8px;}
+</style>
+
+Sidebar {.sidebar}
+=======================================================================
+
+```{r}
+years <- sort(unique(vbg$ANIO[vbg$ANIO %in% 2012:2024]))
+selectInput("anio", "Año", choices=years, selected=max(years))
+selectInput("indicador", "Indicador cartográfico",
+            choices=c("Conteo de notificaciones"="CASOS", "Índice por 100.000 habitantes"="TASA_100MIL"))
+selectInput("municipios", "Municipios (opcional)",
+            choices=sort(unique(vbg$MUNICIPIO)), multiple=TRUE)
+checkboxInput("solo_significativos", "Mostrar solo clústeres LISA significativos", FALSE)
+helpText("Los filtros actualizan gráficos, tablas y mapas. La tasa solo se calcula cuando existe población DANE válida para municipio y año.")
+```
+
+```{r}
+datos_filtrados <- reactive({
+  z <- conteos
+  if(length(input$municipios)) z <- z %>% filter(MUNICIPIO %in% input$municipios)
+  z
+})
+anual_filtrado <- reactive({
+  z <- anual
+  if(length(input$municipios)) z <- z %>% filter(MUNICIPIO %in% input$municipios)
+  z
+})
+```
+
+Resumen
+=======================================================================
+
+Row {data-height=180}
+-----------------------------------------------------------------------
+
+### Registros incluidos
+```{r}
+renderValueBox(valueBox(format(nrow(vbg), big.mark="."), "Notificaciones", icon="fa-database", color="aqua"))
+```
+
+### Municipios observados
+```{r}
+renderValueBox(valueBox(scales::comma(n_distinct(vbg$COD_MUN_N)), "Municipios", icon="fa-map-marker", color="purple"))
+```
+
+### Periodo
+```{r}
+renderValueBox(valueBox(paste0(min(vbg$ANIO),"–",max(vbg$ANIO)), "Cobertura temporal", icon="fa-calendar", color="yellow"))
+```
+
+Row
+-----------------------------------------------------------------------
+
+### Evolución anual
+```{r}
+renderPlotly({
+  z <- datos_filtrados() %>% group_by(ANIO) %>% summarise(CASOS=sum(CASOS),.groups="drop")
+  plot_ly(z,x=~ANIO,y=~CASOS,type="scatter",mode="lines+markers",
+          line=list(color="#7B61A8",width=3),marker=list(color="#F4A6C1",size=8),
+          text=~paste("Año:",ANIO,"<br>Casos:",scales::comma(CASOS)),hoverinfo="text") %>%
+    layout(xaxis=list(title="Año",dtick=1),yaxis=list(title="Notificaciones"),hovermode="x unified")
+})
+```
+
+### Patrón mensual
+```{r}
+renderPlotly({
+  z <- datos_filtrados() %>% group_by(ANIO,MES) %>% summarise(CASOS=sum(CASOS),.groups="drop")
+  plot_ly(z,x=~MES,y=~ANIO,z=~CASOS,type="heatmap",colors=c("#FFE600","#00CC66","#7B2CBF","#E63946"),
+          text=~paste("Año:",ANIO,"<br>Mes:",MES,"<br>Casos:",CASOS),hoverinfo="text") %>%
+    layout(xaxis=list(title="Mes",dtick=1),yaxis=list(title="Año",dtick=1))
+})
+```
+
+Conteos y tasas
+=======================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### Serie por municipio
+```{r}
+renderPlotly({
+  z <- anual_filtrado()
+  validate(need(nrow(z)>0,"No hay datos para el filtro."))
+  top <- z %>% group_by(COD_MUN_N,MUNICIPIO) %>% summarise(T=sum(CASOS),.groups="drop") %>%
+    slice_max(T,n=12,with_ties=FALSE) %>% pull(COD_MUN_N)
+  z <- z %>% filter(COD_MUN_N %in% top)
+  plot_ly(z,x=~ANIO,y=~CASOS,color=~MUNICIPIO,colors=pastel,type="scatter",mode="lines+markers",
+          text=~paste(MUNICIPIO,"<br>Año:",ANIO,"<br>Casos:",CASOS),hoverinfo="text") %>%
+    layout(xaxis=list(title="Año",dtick=1),yaxis=list(title="Notificaciones"),legend=list(orientation="h"))
+})
+```
+
+### Índice por 100.000 habitantes
+```{r}
+renderPlotly({
+  validate(need(pob_ok,"Falta poblacion_dane_2012_2024.csv; no se calculan tasas sin denominadores oficiales."))
+  z <- anual_filtrado() %>% filter(!is.na(TASA_100MIL))
+  validate(need(nrow(z)>0,"No hubo coincidencias municipio-año con población DANE."))
+  z <- z %>% group_by(ANIO) %>% summarise(CASOS=sum(CASOS),POBLACION=sum(POBLACION),
+                                           TASA_100MIL=100000*CASOS/POBLACION,.groups="drop")
+  plot_ly(z,x=~ANIO,y=~TASA_100MIL,type="bar",marker=list(color="#B9FBC0"),
+          text=~paste("Año:",ANIO,"<br>Tasa:",round(TASA_100MIL,2)),hoverinfo="text") %>%
+    layout(xaxis=list(title="Año",dtick=1),yaxis=list(title="Notificaciones por 100.000 habitantes"))
+})
+```
+
+Row
+-----------------------------------------------------------------------
+
+### Tabla municipal anual
+```{r}
+renderDT({
+  z <- anual_filtrado() %>% arrange(desc(ANIO),desc(CASOS))
+  datatable(z,filter="top",rownames=FALSE,extensions=c("Buttons","Scroller"),
+            options=list(scrollX=TRUE,scrollY=430,scroller=TRUE,deferRender=TRUE,
+                         pageLength=25,dom="Bfrtip",buttons=c("copy","csv","excel"))) %>%
+    formatRound("TASA_100MIL",2) %>% formatRound("POBLACION",0)
+})
+```
+
+Cartografía interactiva
+=======================================================================
+
+Row
+-----------------------------------------------------------------------
+
+### Mapa coroplético municipal
+```{r}
+renderLeaflet({
+  validate(need(mapa_ok, "Falta municipios_dane.geojson en la carpeta Proyecto G2."))
+  validate(need(input$anio %in% 2012:2024, "Seleccione un año entre 2012 y 2024."))
+
+  datos_anio <- anual %>%
+    filter(ANIO == as.integer(input$anio)) %>%
+    select(COD_MUN_N, MUNICIPIO, CASOS, POBLACION, TASA_100MIL) %>%
+    distinct(COD_MUN_N, .keep_all = TRUE)
+
+  m_coropletico <- mapa %>%
+    select(COD_MUN_N, geometry) %>%
+    left_join(datos_anio, by = "COD_MUN_N") %>%
+    mutate(
+      CASOS = tidyr::replace_na(CASOS, 0),
+      MUNICIPIO = tidyr::replace_na(MUNICIPIO, "Sin notificación")
+    )
+
+  variable <- input$indicador
+  if (variable == "TASA_100MIL") {
+    validate(need(pob_ok, "Falta población DANE; no se representarán tasas sin denominador."))
+  }
+  # Leaflet evalúa fórmulas dentro del objeto espacial. Se crea una columna
+  # explícita para evitar el error de evaluación con .data[[variable]].
+  m_coropletico$VALOR_MAPA <- as.numeric(m_coropletico[[variable]])
+  valores <- m_coropletico$VALOR_MAPA
+  validate(need(any(is.finite(valores)), "No hay valores válidos para el indicador y año seleccionados."))
+
+  pal <- leaflet::colorNumeric(
+    palette = c("#FFF1B6", "#B9FBC0", "#00B4D8", "#7B2CBF", "#E63946"),
+    domain = valores[is.finite(valores)], na.color = "#FFF7E6"
+ )
+
+  etiquetas <- sprintf(
+    "<strong>%s</strong><br>Código: %s<br>Casos: %s<br>Población: %s<br>Tasa por 100.000: %s",
+    m_coropletico$MUNICIPIO, m_coropletico$COD_MUN_N,
+    format(m_coropletico$CASOS, big.mark = "."),
+    ifelse(is.na(m_coropletico$POBLACION), "No disponible", format(m_coropletico$POBLACION, big.mark = ".")),
+    ifelse(is.na(m_coropletico$TASA_100MIL), "No disponible", format(round(m_coropletico$TASA_100MIL, 2), nsmall = 2))
+  )
+
+  bbox <- sf::st_bbox(m_coropletico)
+  leaflet::leaflet(m_coropletico, options = leaflet::leafletOptions(preferCanvas = TRUE)) %>%
+    leaflet::addTiles(options = leaflet::tileOptions(maxZoom = 18)) %>%
+    leaflet::addPolygons(
+      fillColor = ~pal(VALOR_MAPA), fillOpacity = 0.78,
+      color = "white", weight = 0.45, opacity = 1,
+      label = lapply(etiquetas, htmltools::HTML),
+      highlightOptions = leaflet::highlightOptions(weight = 2, color = "#6D5A8D", bringToFront = TRUE)
+    ) %>%
+    leaflet::addLegend(
+      position = "bottomright", pal = pal, values = valores,
+      title = ifelse(variable == "CASOS", "Notificaciones", "Tasa por 100.000"),
+      opacity = 0.9
+    ) %>%
+    leaflet::fitBounds(bbox[["xmin"]], bbox[["ymin"]], bbox[["xmax"]], bbox[["ymax"]])
+})
+```
+
+Epidemiología espacial
+=======================================================================
+
+Column {data-width=65}
+-----------------------------------------------------------------------
+
+### LISA: Moran local por municipio
+```{r}
+renderLeaflet({
+  validate(need(mapa_ok, "Falta municipios_dane.geojson."))
+  validate(need(input$anio %in% 2012:2024, "Seleccione un año entre 2012 y 2024."))
+  if (input$indicador == "TASA_100MIL") {
+    validate(need(pob_ok, "Para calcular LISA con tasas falta la población DANE."))
+  }
+
+  datos_anio <- anual %>%
+    filter(ANIO == as.integer(input$anio)) %>%
+    select(COD_MUN_N, MUNICIPIO, CASOS, TASA_100MIL) %>%
+    distinct(COD_MUN_N, .keep_all = TRUE)
+
+  # El contraste siempre se calcula sobre toda Colombia, no sobre el filtro visual de municipios.
+  m_lisa <- mapa %>%
+    select(COD_MUN_N, geometry) %>%
+    left_join(datos_anio, by = "COD_MUN_N") %>%
+    mutate(
+      MUNICIPIO = tidyr::replace_na(MUNICIPIO, "Sin notificación"),
+      CASOS = tidyr::replace_na(CASOS, 0)
+    ) %>%
+    sf::st_make_valid()
+
+  variable <- input$indicador
+  if (variable == "CASOS") {
+    m_lisa$valor <- as.numeric(m_lisa$CASOS)
+  } else {
+    m_lisa$valor <- as.numeric(m_lisa$TASA_100MIL)
+  }
+
+  # LISA requiere un vector completo. Para tasas no se imputa población faltante.
+  if (variable == "TASA_100MIL") {
+    valida <- is.finite(m_lisa$valor)
+    validate(need(sum(valida) >= 3, "No hay suficientes tasas municipales válidas para calcular LISA."))
+    m_calc <- m_lisa[valida, ]
+  } else {
+    m_lisa$valor[!is.finite(m_lisa$valor)] <- 0
+    m_calc <- m_lisa
+  }
+
+  validate(need(stats::sd(m_calc$valor, na.rm = TRUE) > 0,
+                "El indicador no presenta variación espacial en el año seleccionado."))
+
+  # Proyección métrica para construir una contigüidad estable.
+  m_calc_proj <- sf::st_transform(m_calc, 3116)
+  vecinos <- spdep::poly2nb(m_calc_proj, row.names = m_calc_proj$COD_MUN_N, queen = TRUE)
+  pesos <- spdep::nb2listw(vecinos, style = "W", zero.policy = TRUE)
+
+  lisa <- spdep::localmoran(
+    m_calc$valor, pesos, zero.policy = TRUE,
+    na.action = na.fail, alternative = "two.sided"
+  )
+  rezago <- spdep::lag.listw(pesos, m_calc$valor, zero.policy = TRUE)
+
+  nombres_lisa <- colnames(lisa)
+  col_p <- grep("^Pr", nombres_lisa, value = TRUE)[1]
+  validate(need(length(col_p) == 1 && !is.na(col_p), "No fue posible identificar el p-valor de Moran local."))
+
+  centro_x <- mean(m_calc$valor)
+  centro_lag <- mean(rezago)
+  m_calc$I_LOCAL <- as.numeric(lisa[, "Ii"])
+  m_calc$Z_LOCAL <- as.numeric(lisa[, "Z.Ii"])
+  m_calc$P_LOCAL <- as.numeric(lisa[, col_p])
+  m_calc$CLUSTER <- dplyr::case_when(
+    is.na(m_calc$P_LOCAL) ~ "No evaluable",
+    m_calc$P_LOCAL >= 0.05 ~ "No significativo",
+    m_calc$valor >= centro_x & rezago >= centro_lag ~ "Alto–Alto",
+    m_calc$valor <  centro_x & rezago <  centro_lag ~ "Bajo–Bajo",
+    m_calc$valor >= centro_x & rezago <  centro_lag ~ "Alto–Bajo",
+    TRUE ~ "Bajo–Alto"
+  )
+
+  # El filtro municipal es solo visual y se aplica después de calcular LISA nacional.
+  if (length(input$municipios)) {
+    m_mostrar <- m_calc %>% filter(MUNICIPIO %in% input$municipios)
+  } else {
+    m_mostrar <- m_calc
+  }
+  if (isTRUE(input$solo_significativos)) {
+    m_mostrar <- m_mostrar %>% filter(CLUSTER %in% c("Alto–Alto", "Bajo–Bajo", "Alto–Bajo", "Bajo–Alto"))
+  }
+  validate(need(nrow(m_mostrar) > 0, "Ningún municipio cumple los filtros seleccionados."))
+
+  colores_lisa <- c(
+    "Alto–Alto" = "#E63946", "Bajo–Bajo" = "#A8DADC",
+    "Alto–Bajo" = "#FFD6A5", "Bajo–Alto" = "#BDB2FF",
+    "No significativo" = "#B9FBC0", "No evaluable" = "#FFF1B6"
+  )
+  pal_lisa <- leaflet::colorFactor(
+    palette = colores_lisa, domain = names(colores_lisa), na.color = "#FFF7E6"
+  )
+
+  etiquetas <- sprintf(
+    "<strong>%s</strong><br>Código: %s<br>Clúster LISA: %s<br>Indicador: %.2f<br>I local: %.4f<br>Z: %.3f<br>p: %.4f",
+    m_mostrar$MUNICIPIO, m_mostrar$COD_MUN_N, m_mostrar$CLUSTER,
+    m_mostrar$valor, m_mostrar$I_LOCAL, m_mostrar$Z_LOCAL, m_mostrar$P_LOCAL
+  )
+  bbox <- sf::st_bbox(m_mostrar)
+
+  leaflet::leaflet(m_mostrar, options = leaflet::leafletOptions(preferCanvas = TRUE)) %>%
+    leaflet::addTiles(options = leaflet::tileOptions(maxZoom = 18)) %>%
+    leaflet::addPolygons(
+      fillColor = ~pal_lisa(CLUSTER), fillOpacity = 0.82,
+      color = "white", weight = 0.45, opacity = 1,
+      label = lapply(etiquetas, htmltools::HTML),
+      highlightOptions = leaflet::highlightOptions(weight = 2, color = "#6D5A8D", bringToFront = TRUE)
+    ) %>%
+    leaflet::addLegend(
+      position = "bottomright", pal = pal_lisa, values = ~CLUSTER,
+      title = paste("LISA", input$anio), opacity = 0.9
+    ) %>%
+    leaflet::fitBounds(bbox[["xmin"]], bbox[["ymin"]], bbox[["xmax"]], bbox[["ymax"]])
+})
+```
+
+Column {data-width=35}
+-----------------------------------------------------------------------
+
+### Interpretación
+
+<div class="nota">
+<strong>Moran local (LISA)</strong> contrasta cada municipio con su vecindad de contigüidad tipo reina. Alto–Alto identifica concentraciones locales de valores altos; Bajo–Bajo, concentraciones bajas; Alto–Bajo y Bajo–Alto son posibles valores atípicos espaciales. Se usa p &lt; 0,05 sin ajuste por comparaciones múltiples, por lo cual los resultados son exploratorios y no prueban causalidad.
+</div>
+
+### Persistencia y emergencia
+```{r}
+renderDT({
+  validate(need(mapa_ok,"Falta municipios_dane.geojson."))
+  base <- anual %>% group_by(ANIO) %>% mutate(q80=quantile(CASOS,.8,na.rm=TRUE),alto=CASOS>=q80) %>% ungroup()
+  pers <- base %>% group_by(COD_MUN_N,MUNICIPIO) %>%
+    summarise(ANIOS_ALTOS=sum(alto),ALTO_2022_2024=any(alto & ANIO>=2022),
+              ALTO_2012_2021=any(alto & ANIO<=2021),.groups="drop") %>%
+    mutate(PATRON=case_when(ANIOS_ALTOS>=5~"Persistente",ALTO_2022_2024 & !ALTO_2012_2021~"Emergente",TRUE~"Sin criterio")) %>%
+    arrange(desc(ANIOS_ALTOS))
+  datatable(pers,filter="top",rownames=FALSE,options=list(scrollX=TRUE,pageLength=15))
+})
+```
+
+Metodología y calidad
+=======================================================================
+
+### Alcance, fuentes y validaciones
+
+<div class="nota">
+<strong>Numerador:</strong> registros incluidos del archivo consolidado. <strong>Denominador:</strong> población municipal anual suministrada en un archivo separado proveniente del DANE. La tasa se calcula como: casos / población × 100.000. Los conteos representan notificaciones y no equivalen automáticamente a incidencia clínica ni prevalencia.
+</div>
+
+```{r}
+calidad <- tibble(
+  CONTROL=c("Filas analizadas","Años","Códigos municipales nulos","Periodos inválidos","Municipio-año sin población","Archivo cartográfico"),
+  RESULTADO=c(nrow(vbg),paste(range(vbg$ANIO),collapse="–"),sum(is.na(vbg$COD_MUN_N)),
+              sum(!vbg$ANIO %in% 2012:2024 | !vbg$MES %in% 1:12),sum(is.na(anual$POBLACION)),
+              ifelse(mapa_ok,"Disponible","No disponible")))
+datatable(calidad,rownames=FALSE,options=list(dom="t",scrollX=TRUE))
+```
+
+### Preparación de insumos
+
+1. Guardamos las proyecciones municipales oficiales del DANE como `poblacion_dane_2012_2024.csv`, con columnas `COD_MUN_N`, `ANIO` y `POBLACION`.
+2. Guardamos la cartografía municipal como `municipios_dane.geojson`, con un código municipal compatible.
+3. Renderizamos con **Run Document**. Al usar `runtime: shiny`, el tablero es interactivo durante una sesión de R; para publicación persistente requiere un servidor compatible con Shiny.
+4. No interpretamos los clústeres como causalidad. Antes de difusión institucional, documentamos cambios de definición de caso, cobertura y oportunidad de notificación.
+
+### Fuente oficial de población
+
+DANE, Proyecciones de población: https://www.dane.gov.co/estadisticas-por-tema/demografia-y-poblacion/proyecciones-de-poblacion

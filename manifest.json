@@ -2670,8 +2670,20 @@
     "APOYOS ANALISIS/PPED-AreaMun-2018-2042_VP.xlsx": {
       "checksum": "5d50719c827c616dc3b891b8dbf0a9c6"
     },
+    "APOYOS ANALISIS/tablero_vbg_espaciotemporal_corregido_final.zip": {
+      "checksum": "757e30463178f15f3f7d6834333d38be"
+    },
+    "BACKUP_tablero_vbg_original.zip": {
+      "checksum": "a0da9b1cc30b0af334df7a550b5400c6"
+    },
     "consolidado_875_incluidos.csv": {
       "checksum": "731c1480b60d980ee2e32e38cc91102e"
+    },
+    "consolidado_875_publicacion.csv": {
+      "checksum": "a15fa4303e4a9697b3dd05f070a26adc"
+    },
+    "conteos_publicacion.csv": {
+      "checksum": "896ad7126cfce0c9e80fd9358f38159a"
     },
     "DIVIPOLA-_Códigos_municipios_20260731.csv": {
       "checksum": "ed6ca6f1a39b3479b28bf5d6981876bb"
@@ -2683,13 +2695,10 @@
       "checksum": "5b081d2d4c97d88c7d858ac86c8fe196"
     },
     "tablero_vbg_espaciotemporal_corregido_final.html": {
-      "checksum": "d362efaf16e7615aa47ef49efec455ff"
+      "checksum": "2c1a8ed02c43bd6813dc77ad64a6dd01"
     },
     "tablero_vbg_espaciotemporal_corregido_final.Rmd": {
-      "checksum": "c99fc5300e15deb84bc46c2308d79857"
-    },
-    "tablero_vbg_espaciotemporal_corregido_final.zip": {
-      "checksum": "757e30463178f15f3f7d6834333d38be"
+      "checksum": "6b54150f2d892a459641dcccd374cd1c"
     },
     "Técnica Estaística LISA/Qué es LISA en epidemiología y que es lo que se analiza.docx": {
       "checksum": "d41d8cd98f00b204e9800998ecf8427e"

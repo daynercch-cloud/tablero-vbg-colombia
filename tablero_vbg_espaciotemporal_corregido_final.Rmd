@@ -15,6 +15,23 @@ runtime: shiny
  knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
 
  library(lubridate)
+ library(flexdashboard)
+library(shiny)
+library(dplyr)
+library(tidyr)
+library(readr)
+library(stringr)
+library(lubridate)
+library(plotly)
+library(DT)
+library(leaflet)
+library(sf)
+library(spdep)
+library(scales)
+library(htmltools)
+library(htmlwidgets)
+library(viridisLite)
+library(RColorBrewer)
  
  paquetes <- c("flexdashboard","shiny","dplyr","tidyr","readr","stringr","lubridate",
               "plotly","DT","leaflet","sf","spdep","scales","htmltools","htmlwidgets",
@@ -23,7 +40,7 @@ runtime: shiny
 # if(length(faltantes)) stop("Instale primero: install.packages(c(",
 #                            paste(sprintf("'%s'", faltantes), collapse=","), "))")
 
-invisible(lapply(paquetes, library, character.only=TRUE))
+# invisible(lapply(paquetes, library, character.only=TRUE))
 ```
 
 

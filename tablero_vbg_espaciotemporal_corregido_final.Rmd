@@ -14,6 +14,8 @@ runtime: shiny
  options(scipen=999, encoding="UTF-8")
  knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
 
+ library(lubridate)
+ 
  paquetes <- c("flexdashboard","shiny","dplyr","tidyr","readr","stringr","lubridate",
               "plotly","DT","leaflet","sf","spdep","scales","htmltools","htmlwidgets",
               "viridisLite","RColorBrewer")

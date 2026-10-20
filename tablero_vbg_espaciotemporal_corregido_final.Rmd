@@ -129,7 +129,7 @@ Sidebar {.sidebar}
 years <- sort(unique(vbg$ANIO[vbg$ANIO %in% 2012:2024]))
 selectInput("anio", "Año", choices=years, selected=max(years))
 selectInput("indicador", "Indicador cartográfico",
-            choices=c("Conteo de notificaciones"="CASOS", "Índice por 100.000 habitantes"="TASA_100MIL"))
+            choices=c("Conteo de notificaciones"="CASOS", "Tasa por 100.000 habitantes"="TASA_100MIL"))
 selectInput("municipios", "Municipios (opcional)",
             choices=sort(unique(vbg$MUNICIPIO)), multiple=TRUE)
 checkboxInput("solo_significativos", "Mostrar solo clústeres LISA significativos", FALSE)

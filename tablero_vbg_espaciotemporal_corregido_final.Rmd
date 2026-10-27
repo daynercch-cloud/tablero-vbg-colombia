@@ -221,7 +221,7 @@ renderPlotly({
 })
 ```
 
-### Índice por 100.000 habitantes
+### Tasa por 100.000 habitantes
 ```{r}
 renderPlotly({
   validate(need(pob_ok,"Falta poblacion_dane_2012_2024.csv; no se calculan tasas sin denominadores oficiales."))
